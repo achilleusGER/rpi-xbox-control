@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+venv/
+.venv/
+env/
+*.venv
+
+# Virtual environment (Pi)
+xbox-ctrl-venv/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Build output
+dist/
+frontend/dist/
+
+# Sequences (auto-generiert, nicht versionieren)
+sequences.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/

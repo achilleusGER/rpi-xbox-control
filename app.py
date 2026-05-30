@@ -1,0 +1,225 @@
+"""
+app.py
+Flask REST-API für den Xbox Controller.
+Stellt Endpunkte für Discovery, Verbindung, Button-Senden
+und Sequenz-Verwaltung/-Ausführung bereit.
+"""
+
+import json
+import logging
+import threading
+import time
+from pathlib import Path
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+
+from xbox_client import XboxClient
+
+# ── Setup ─────────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger(__name__)
+
+app = Flask(__name__)
+CORS(app)   # erlaubt Zugriff vom Vite-Dev-Server (Port 5173) und Produktion
+
+client = XboxClient()
+
+SEQUENCES_FILE = Path(__file__).parent / "sequences.json"
+
+# Laufende Sequenz
+_seq_thread: threading.Thread | None = None
+_stop_event = threading.Event()
+
+
+# ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+
+def load_sequences() -> dict:
+    if SEQUENCES_FILE.exists():
+        return json.loads(SEQUENCES_FILE.read_text(encoding="utf-8"))
+    return {}
+
+
+def save_sequences(data: dict) -> None:
+    SEQUENCES_FILE.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def execute_sequence(steps: list, repeat: bool) -> None:
+    """Läuft in einem eigenen Thread. Führt die Schritte aus."""
+    _stop_event.clear()
+    while True:
+        for step in steps:
+            if _stop_event.is_set():
+                return
+            try:
+                if step["type"] == "button":
+                    client.send_button(step["button"])
+                elif step["type"] == "wait":
+                    # In kleinen Schritten warten → sofortiger Stop möglich
+                    deadline = time.monotonic() + float(step["seconds"])
+                    while time.monotonic() < deadline:
+                        if _stop_event.is_set():
+                            return
+                        time.sleep(0.05)
+            except Exception as e:
+                log.error("Fehler beim Ausführen von Schritt %s: %s", step, e)
+        if not repeat:
+            break
+    log.info("Sequenz beendet.")
+
+
+# ── Routen: Xbox ──────────────────────────────────────────────────────────────
+
+@app.get("/api/status")
+def status():
+    return jsonify({
+        "connected": client.connected,
+        "console": client.console_info,
+    })
+
+
+@app.post("/api/scan")
+def scan():
+    timeout = request.json.get("timeout", 5) if request.is_json else 5
+    try:
+        consoles = client.discover(timeout=int(timeout))
+        return jsonify({"consoles": consoles})
+    except Exception as e:
+        log.exception("Scan-Fehler")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/connect")
+def connect():
+    liveid = (request.json or {}).get("liveid")
+    if not liveid:
+        return jsonify({"error": "liveid fehlt"}), 400
+    try:
+        info = client.connect(liveid)
+        return jsonify(info)
+    except Exception as e:
+        log.exception("Verbindungs-Fehler")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/disconnect")
+def disconnect():
+    client.disconnect()
+    return jsonify({"status": "disconnected"})
+
+
+@app.post("/api/button")
+def button():
+    btn = (request.json or {}).get("button")
+    if not btn:
+        return jsonify({"error": "button fehlt"}), 400
+    if not client.connected:
+        return jsonify({"error": "Nicht verbunden"}), 400
+    try:
+        client.send_button(btn)
+        return jsonify({"sent": btn})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        log.exception("Button-Fehler")
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Routen: Sequenzen ─────────────────────────────────────────────────────────
+
+@app.get("/api/sequences")
+def get_sequences():
+    return jsonify(load_sequences())
+
+
+@app.post("/api/sequences")
+def upsert_sequence():
+    data = request.json or {}
+    name = data.get("name", "").strip()
+    steps = data.get("steps")
+    if not name:
+        return jsonify({"error": "name fehlt"}), 400
+    if not isinstance(steps, list):
+        return jsonify({"error": "steps muss eine Liste sein"}), 400
+
+    seqs = load_sequences()
+    seqs[name] = steps
+    save_sequences(seqs)
+    return jsonify({"saved": name})
+
+
+@app.put("/api/sequences/<name>")
+def rename_sequence(name: str):
+    new_name = (request.json or {}).get("name", "").strip()
+    if not new_name:
+        return jsonify({"error": "neuer Name fehlt"}), 400
+    seqs = load_sequences()
+    if name not in seqs:
+        return jsonify({"error": "Sequenz nicht gefunden"}), 404
+    seqs[new_name] = seqs.pop(name)
+    save_sequences(seqs)
+    return jsonify({"renamed": new_name})
+
+
+@app.delete("/api/sequences/<name>")
+def delete_sequence(name: str):
+    seqs = load_sequences()
+    if name not in seqs:
+        return jsonify({"error": "Sequenz nicht gefunden"}), 404
+    del seqs[name]
+    save_sequences(seqs)
+    return jsonify({"deleted": name})
+
+
+# ── Routen: Ausführung ────────────────────────────────────────────────────────
+
+@app.post("/api/run/<name>")
+def run_sequence(name: str):
+    global _seq_thread
+    if not client.connected:
+        return jsonify({"error": "Nicht verbunden"}), 400
+
+    seqs = load_sequences()
+    steps = seqs.get(name)
+    if steps is None:
+        return jsonify({"error": f"Sequenz '{name}' nicht gefunden"}), 404
+
+    repeat = (request.json or {}).get("repeat", False)
+
+    # Laufende Sequenz stoppen
+    _stop_event.set()
+    if _seq_thread and _seq_thread.is_alive():
+        _seq_thread.join(timeout=2)
+
+    _seq_thread = threading.Thread(
+        target=execute_sequence,
+        args=(steps, repeat),
+        daemon=True,
+    )
+    _seq_thread.start()
+    return jsonify({"running": name, "repeat": repeat})
+
+
+@app.post("/api/stop")
+def stop_sequence():
+    _stop_event.set()
+    return jsonify({"status": "stopped"})
+
+
+@app.get("/api/running")
+def is_running():
+    running = bool(_seq_thread and _seq_thread.is_alive() and not _stop_event.is_set())
+    return jsonify({"running": running})
+
+
+# ── Start ─────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080, debug=False)
