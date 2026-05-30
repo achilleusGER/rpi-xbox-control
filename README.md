@@ -7,37 +7,24 @@ zum Erstellen, Verwalten und Ausführen von Tastensequenzen.
 ## Projektstruktur
 
 ```
-xbox-controller/
-├── backend/
-│   ├── app.py                  # Flask API-Server
-│   ├── xbox_client.py          # SmartGlass-Wrapper
-│   ├── keepalive.py            # Controller-Keep-Alive (evdev)
-│   ├── sequences.json          # Sequenz-Bibliothek (auto-generiert)
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx             # Haupt-React-App (Editor)
-│   │   └── main.jsx
-│   ├── public/
-│   │   └── index.html
-│   ├── package.json
-│   └── vite.config.js
-├── systemd/
-│   ├── xbox-webapp.service     # systemd: Web-App
-│   └── xbox-keepalive.service  # systemd: Keep-Alive
-├── install.sh                  # Einrichtungs-Skript für den Pi
+rpi-xbox-control/
+├── App.jsx          # React-Frontend (Smartphone-UI)
+├── app.py           # Flask REST-API
+├── xbox_client.py   # SmartGlass-Wrapper
+├── keepalive.py     # Controller-Keep-Alive (evdev)
+├── install.sh       # Einrichtungs-Skript für den Pi
 └── README.md
 ```
 
 ## Schnellstart (Raspberry Pi)
 
 ```bash
-# 1. Repo klonen / Projekt übertragen
+# 1. Repo klonen
 cd ~
-git clone <dein-repo> xbox-controller   # oder per scp
+git clone https://github.com/achilleusGER/rpi-xbox-control
+cd rpi-xbox-control
 
 # 2. Alles installieren
-cd xbox-controller
 chmod +x install.sh
 ./install.sh
 
@@ -48,9 +35,11 @@ xbox-authenticate
 # 4. Services starten
 sudo systemctl start xbox-webapp
 sudo systemctl start xbox-keepalive
+
+# WICHTIG: Danach neu einloggen (Gruppe 'input' muss aktiv sein)
 ```
 
-Web-Interface: http://<PI-IP>:8080
+Web-Interface: `http://<PI-IP>:8080`
 
 ## Voraussetzungen Xbox
 
@@ -62,7 +51,7 @@ Web-Interface: http://<PI-IP>:8080
 ## Voraussetzungen Pi
 
 - Raspberry Pi 3B+ oder neuer
-- Raspberry Pi OS (Bookworm empfohlen)
+- Raspberry Pi OS Bookworm (empfohlen)
 - Python 3.10+
 - Node.js 18+ (für Frontend-Build)
 - Xbox Controller per USB angeschlossen
