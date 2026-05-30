@@ -18,7 +18,8 @@ echo "[1/6] System-Pakete installieren..."
 sudo apt-get update -q || true
 
 sudo apt-get install -y \
-  python3-pip python3-setuptools build-essential \
+  python3-pip python3-setuptools python3-venv build-essential \
+  python3-cryptography \
   git curl
 
 # ── Python-Version für das venv ────────────────────────────────────────────
@@ -57,9 +58,9 @@ echo "      Node $(node --version), npm $(npm --version)"
 # ── Python venv + Abhängigkeiten ───────────────────────────────────
 
 echo "[2/6] Python-Umgebung einrichten..."
-# Kein --system-site-packages: apt-Pakete auf Trixie sind für Python 3.13,
-# nicht für 3.12/3.11. Stattdessen voll auf piwheels-Wheels setzen.
-$PYTHON -m venv "$VENV"
+# --system-site-packages: macht python3-cryptography (apt, vorcompiliert) im venv
+# sichtbar → pip überspringt den Quellcode-Build und braucht keinen Rust-Compiler.
+$PYTHON -m venv --system-site-packages "$VENV"
 "$VENV/bin/pip" install --upgrade pip setuptools wheel -q
 "$VENV/bin/pip" install flask flask-cors -q
 "$VENV/bin/pip" install xbox-smartglass-core --no-build-isolation -q
