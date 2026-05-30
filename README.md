@@ -18,26 +18,56 @@ rpi-xbox-control/
 
 ## Schnellstart (Raspberry Pi)
 
+### Schritt 0 — Einmalig: Git installieren
+
+Auf einem frischen Raspberry Pi OS muss Git zuerst manuell installiert werden,
+da es zum Klonen des Repos benötigt wird:
+
 ```bash
-# 1. Repo klonen
+sudo apt-get update && sudo apt-get install -y git
+```
+
+> Alles weitere (Python, pip, Node.js, npm, Flask, …) installiert `install.sh` automatisch.
+
+### Schritt 1 — Repo klonen
+
+```bash
 cd ~
 git clone https://github.com/achilleusGER/rpi-xbox-control
 cd rpi-xbox-control
+```
 
-# 2. Alles installieren
+### Schritt 2 — Setup ausführen
+
+```bash
 chmod +x install.sh
 ./install.sh
+```
 
-# 3. Xbox-Konto einmalig authentifizieren
+### Schritt 3 — Xbox-Konto einmalig authentifizieren
+
+```bash
 source ~/xbox-ctrl-venv/bin/activate
 xbox-authenticate
+```
 
-# 4. Services starten
+→ Öffnet einen Link — im Browser mit dem Microsoft-Account einloggen.
+
+### Schritt 4 — Services starten
+
+```bash
 sudo systemctl start xbox-webapp
 sudo systemctl start xbox-keepalive
-
-# WICHTIG: Danach neu einloggen (Gruppe 'input' muss aktiv sein)
 ```
+
+### Schritt 5 — Neu einloggen ⚠️
+
+```bash
+# Ausloggen und wieder einloggen!
+# (Damit die Gruppe 'input' für den USB-Controller aktiv wird.)
+```
+
+### Fertig
 
 Web-Interface: `http://<PI-IP>:8080`
 

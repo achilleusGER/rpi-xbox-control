@@ -3,7 +3,7 @@
 set -e
 
 VENV="$HOME/xbox-ctrl-venv"
-PROJECT="$HOME/xbox-controller"
+PROJECT="$HOME/rpi-xbox-control"
 NODE_MIN=18
 
 echo "======================================"
@@ -15,6 +15,7 @@ echo "======================================"
 echo "[1/6] System-Pakete installieren..."
 sudo apt-get update -q
 sudo apt-get install -y python3 python3-pip python3-venv git curl
+echo "      Python $(python3 --version)"
 
 # Node.js prüfen / installieren
 if ! command -v node &>/dev/null || [ "$(node -e 'process.stdout.write(process.version.slice(1).split(".")[0])')" -lt "$NODE_MIN" ]; then
@@ -29,22 +30,16 @@ echo "      Node $(node --version), npm $(npm --version)"
 echo "[2/6] Python-Umgebung einrichten..."
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install --upgrade pip -q
-"$VENV/bin/pip" install -r "$PROJECT/backend/requirements.txt" -q
+"$VENV/bin/pip" install flask flask-cors xbox-smartglass-core -q
 echo "      Pakete installiert."
 
 # ── Frontend bauen ─────────────────────────────────────────────────
 
 echo "[3/6] Frontend bauen..."
-cd "$PROJECT/frontend"
+cd "$PROJECT"
 npm install --silent
 npm run build
-echo "      Build abgeschlossen → backend/static/"
-
-# ── Flask: statische Dateien einbinden ────────────────────────────
-
-# Flask soll den gebauten Frontend-Code auch ohne separaten Webserver ausliefern.
-# Dazu wird app.py so konfiguriert, dass /  → backend/static/index.html liefert.
-# (Bereits in app.py via static_folder vorbereitet – wird hier nur geprüft.)
+echo "      Build abgeschlossen."
 
 # ── systemd Services ───────────────────────────────────────────────
 
