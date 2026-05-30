@@ -14,12 +14,17 @@ echo "======================================"
 
 echo "[1/6] System-Pakete installieren..."
 sudo apt-get update -q
-# python3-cryptography: vorcompiliert via apt, vermeidet Rust-Build-Fehler auf Python 3.13
-sudo apt-get install -y python3 python3-pip python3-venv python3-setuptools \
-  python3-dev build-essential \
-  python3-cryptography python3-gevent python3-greenlet \
+# python3.11 wird explizit genutzt: xbox-smartglass-core hat Abhängigkeiten (gevent),
+# die auf Python 3.13 nicht kompilieren (longintrepr.h entfernt seit Py 3.13).
+# Python 3.11 ist auf Raspberry Pi OS Bookworm die Standard-System-Python und hat
+# vorcompilierte piwheels-Pakete für alle Abhängigkeiten.
+sudo apt-get install -y \
+  python3.11 python3.11-venv python3.11-dev \
+  python3-pip python3-setuptools build-essential \
+  python3-cryptography \
   git curl
-echo "      Python $(python3 --version)"
+PYTHON=python3.11
+echo "      $($PYTHON --version)"
 
 # Node.js prüfen / installieren
 if ! command -v node &>/dev/null || [ "$(node -e 'process.stdout.write(process.version.slice(1).split(".")[0])')" -lt "$NODE_MIN" ]; then
@@ -32,14 +37,11 @@ echo "      Node $(node --version), npm $(npm --version)"
 # ── Python venv + Abhängigkeiten ───────────────────────────────────
 
 echo "[2/6] Python-Umgebung einrichten..."
-# --system-site-packages: nutzt das per apt installierte python3-cryptography,
-# kein Rust-Compiler oder Build-Isolation nötig
-python3 -m venv --system-site-packages "$VENV"
+# python3.11 + --system-site-packages: nutzt vorcompiliertes python3-cryptography via apt.
+# piwheels liefert für Python 3.11 / aarch64 fertige Wheels für gevent, greenlet usw.
+$PYTHON -m venv --system-site-packages "$VENV"
 "$VENV/bin/pip" install --upgrade pip setuptools wheel -q
 "$VENV/bin/pip" install flask flask-cors -q
-# greenlet + gevent: Python 3.13 entfernte longintrepr.h → erst neue Versionen vorab installieren,
-# damit xbox-smartglass-core keine inkompatible alte Version kompiliert
-"$VENV/bin/pip" install "greenlet>=3.0.3" "gevent>=24.2.1" -q
 "$VENV/bin/pip" install xbox-smartglass-core --no-build-isolation -q
 echo "      Pakete installiert."
 
