@@ -14,7 +14,9 @@ echo "======================================"
 
 echo "[1/6] System-Pakete installieren..."
 sudo apt-get update -q
-sudo apt-get install -y python3 python3-pip python3-venv python3-setuptools git curl
+# python3-cryptography: vorcompiliert via apt, vermeidet Rust-Build-Fehler auf Python 3.13
+sudo apt-get install -y python3 python3-pip python3-venv python3-setuptools \
+  python3-cryptography git curl
 echo "      Python $(python3 --version)"
 
 # Node.js prüfen / installieren
@@ -28,10 +30,10 @@ echo "      Node $(node --version), npm $(npm --version)"
 # ── Python venv + Abhängigkeiten ───────────────────────────────────
 
 echo "[2/6] Python-Umgebung einrichten..."
-python3 -m venv "$VENV"
-# setuptools + wheel zuerst – pkg_resources fehlt sonst in Python 3.12+
+# --system-site-packages: nutzt das per apt installierte python3-cryptography,
+# kein Rust-Compiler oder Build-Isolation nötig
+python3 -m venv --system-site-packages "$VENV"
 "$VENV/bin/pip" install --upgrade pip setuptools wheel -q
-# xbox-smartglass-core hat veraltete Metadaten → --no-build-isolation umgeht den pip-Bug
 "$VENV/bin/pip" install flask flask-cors -q
 "$VENV/bin/pip" install xbox-smartglass-core --no-build-isolation -q
 echo "      Pakete installiert."
