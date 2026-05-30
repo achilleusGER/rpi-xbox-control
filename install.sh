@@ -14,7 +14,7 @@ echo "======================================"
 
 echo "[1/6] System-Pakete installieren..."
 sudo apt-get update -q
-sudo apt-get install -y python3 python3-pip python3-venv git curl
+sudo apt-get install -y python3 python3-pip python3-venv python3-setuptools git curl
 echo "      Python $(python3 --version)"
 
 # Node.js prüfen / installieren
@@ -29,8 +29,11 @@ echo "      Node $(node --version), npm $(npm --version)"
 
 echo "[2/6] Python-Umgebung einrichten..."
 python3 -m venv "$VENV"
-"$VENV/bin/pip" install --upgrade pip -q
-"$VENV/bin/pip" install flask flask-cors xbox-smartglass-core -q
+# setuptools + wheel zuerst – pkg_resources fehlt sonst in Python 3.12+
+"$VENV/bin/pip" install --upgrade pip setuptools wheel -q
+# xbox-smartglass-core hat veraltete Metadaten → --no-build-isolation umgeht den pip-Bug
+"$VENV/bin/pip" install flask flask-cors -q
+"$VENV/bin/pip" install xbox-smartglass-core --no-build-isolation -q
 echo "      Pakete installiert."
 
 # ── Frontend bauen ─────────────────────────────────────────────────
