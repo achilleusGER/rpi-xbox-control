@@ -13,17 +13,37 @@ echo "======================================"
 # ── System-Pakete ──────────────────────────────────────────────────
 
 echo "[1/6] System-Pakete installieren..."
-sudo apt-get update -q
-# python3.11 wird explizit genutzt: xbox-smartglass-core hat Abhängigkeiten (gevent),
-# die auf Python 3.13 nicht kompilieren (longintrepr.h entfernt seit Py 3.13).
-# Python 3.11 ist auf Raspberry Pi OS Bookworm die Standard-System-Python und hat
-# vorcompilierte piwheels-Pakete für alle Abhängigkeiten.
+# Fehler bei einzelnen Repos nicht abbrechen:
+# archive.raspberrypi.com/debian hat noch kein Trixie-Release (Stand 2025).
+sudo apt-get update -q || true
+
 sudo apt-get install -y \
-  python3.11 python3.11-venv python3.11-dev \
   python3-pip python3-setuptools build-essential \
-  python3-cryptography \
   git curl
-PYTHON=python3.11
+
+# ── Python-Version für das venv ────────────────────────────────────────────
+# Python 3.13 (Trixie-Default) ist inkompatibel mit dem alten gevent, das
+# xbox-smartglass-core mitbringt (longintrepr.h in Py 3.13 entfernt).
+# Python 3.12 hat longintrepr.h noch und piwheels liefert fertige Wheels.
+PYTHON=""
+for py in python3.12 python3.11; do
+  if command -v "$py" &>/dev/null; then
+    PYTHON="$py"
+    break
+  fi
+done
+if [ -z "$PYTHON" ]; then
+  echo "      python3.12 wird installiert..."
+  if sudo apt-get install -y python3.12 python3.12-venv python3.12-dev -q 2>/dev/null; then
+    PYTHON=python3.12
+  else
+    echo "      python3.11 wird installiert..."
+    sudo apt-get install -y python3.11 python3.11-venv python3.11-dev -q
+    PYTHON=python3.11
+  fi
+fi
+# venv + dev-Headers für die gewählte Version sicherstellen
+sudo apt-get install -y "${PYTHON}-venv" "${PYTHON}-dev" -q 2>/dev/null || true
 echo "      $($PYTHON --version)"
 
 # Node.js prüfen / installieren
@@ -37,9 +57,9 @@ echo "      Node $(node --version), npm $(npm --version)"
 # ── Python venv + Abhängigkeiten ───────────────────────────────────
 
 echo "[2/6] Python-Umgebung einrichten..."
-# python3.11 + --system-site-packages: nutzt vorcompiliertes python3-cryptography via apt.
-# piwheels liefert für Python 3.11 / aarch64 fertige Wheels für gevent, greenlet usw.
-$PYTHON -m venv --system-site-packages "$VENV"
+# Kein --system-site-packages: apt-Pakete auf Trixie sind für Python 3.13,
+# nicht für 3.12/3.11. Stattdessen voll auf piwheels-Wheels setzen.
+$PYTHON -m venv "$VENV"
 "$VENV/bin/pip" install --upgrade pip setuptools wheel -q
 "$VENV/bin/pip" install flask flask-cors -q
 "$VENV/bin/pip" install xbox-smartglass-core --no-build-isolation -q
