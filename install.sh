@@ -16,7 +16,9 @@ echo "[1/6] System-Pakete installieren..."
 sudo apt-get update -q
 # python3-cryptography: vorcompiliert via apt, vermeidet Rust-Build-Fehler auf Python 3.13
 sudo apt-get install -y python3 python3-pip python3-venv python3-setuptools \
-  python3-cryptography git curl
+  python3-dev build-essential \
+  python3-cryptography python3-gevent python3-greenlet \
+  git curl
 echo "      Python $(python3 --version)"
 
 # Node.js prüfen / installieren
@@ -35,6 +37,9 @@ echo "[2/6] Python-Umgebung einrichten..."
 python3 -m venv --system-site-packages "$VENV"
 "$VENV/bin/pip" install --upgrade pip setuptools wheel -q
 "$VENV/bin/pip" install flask flask-cors -q
+# greenlet + gevent: Python 3.13 entfernte longintrepr.h → erst neue Versionen vorab installieren,
+# damit xbox-smartglass-core keine inkompatible alte Version kompiliert
+"$VENV/bin/pip" install "greenlet>=3.0.3" "gevent>=24.2.1" -q
 "$VENV/bin/pip" install xbox-smartglass-core --no-build-isolation -q
 echo "      Pakete installiert."
 
