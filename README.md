@@ -67,3 +67,32 @@ Web-Interface: `http://<PI-IP>:8080`
   ]
 }
 ```
+
+---
+
+## Verwendete Bibliotheken & Quellen
+
+### Backend (Python)
+
+| Bibliothek | Zweck | Quelle |
+|---|---|---|
+| **xbox-smartglass-core** | SmartGlass-Protokoll: Discovery, Verbindung, Gamepad-Buttons | [OpenXbox/xbox-smartglass-core-python](https://github.com/OpenXbox/xbox-smartglass-core-python) |
+| **Flask** | REST-API-Server | [palletsprojects.com/p/flask](https://palletsprojects.com/p/flask/) |
+| **Flask-CORS** | Cross-Origin-Requests vom Frontend erlauben | [github.com/corydolphin/flask-cors](https://github.com/corydolphin/flask-cors) |
+| **evdev** | Linux-Input-Geräte ansprechen (Keep-Alive-Rumble) | [github.com/gvalkov/python-evdev](https://github.com/gvalkov/python-evdev) |
+
+### Frontend (JavaScript)
+
+| Bibliothek | Zweck | Quelle |
+|---|---|---|
+| **React** | UI-Framework | [react.dev](https://react.dev) |
+| **Vite** | Build-Tool / Dev-Server | [vitejs.dev](https://vitejs.dev) |
+
+### Design
+
+| Tool | Zweck | Quelle |
+|---|---|---|
+| **Hallmark** | Anti-AI-Slop Design Skill (OKLCH-Tokens, Smartphone-Layout) | [github.com/Nutlope/hallmark](https://github.com/Nutlope/hallmark) |
+| **Space Grotesk** | Display-Schrift | [fonts.google.com/specimen/Space+Grotesk](https://fonts.google.com/specimen/Space+Grotesk) |
+| **Inter** | Fließtext-Schrift | [rsms.me/inter](https://rsms.me/inter) |
+| **JetBrains Mono** | Monospace-Schrift (Werte, Metriken) | [jetbrains.com/lp/mono](https://www.jetbrains.com/lp/mono/) |
