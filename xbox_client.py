@@ -25,7 +25,7 @@ BUTTON_MAP: dict[str, GamePadButton] = {
     "Right": GamePadButton.DPadRight,
     "Menu":  GamePadButton.Menu,
     "View":  GamePadButton.View,
-    "Nexus": GamePadButton.Nexus,
+    "Nexus": GamePadButton.Nexu,   # xbox-smartglass-core 1.3.0: Nexu statt Nexus
     "LB":    GamePadButton.LeftShoulder,
     "RB":    GamePadButton.RightShoulder,
 }
