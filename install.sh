@@ -58,12 +58,26 @@ echo "      Node $(node --version), npm $(npm --version)"
 # ── Python venv + Abhängigkeiten ───────────────────────────────────
 
 echo "[2/6] Python-Umgebung einrichten..."
-# --system-site-packages: macht python3-cryptography (apt, vorcompiliert) im venv
-# sichtbar → pip überspringt den Quellcode-Build und braucht keinen Rust-Compiler.
-$PYTHON -m venv --system-site-packages "$VENV"
-"$VENV/bin/pip" install --upgrade pip setuptools wheel -q
+# Frisches venv ohne --system-site-packages:
+# xbox-smartglass-core 1.3.0 pinnt cryptography==3.2.1 (inkompatibel mit apt 38.x).
+# Mit --no-deps installieren, dann nur die tatsächlich nötigen Laufzeit-Deps.
+# uvicorn==0.12.2 (ungültige Metadaten in pip≥24.1) und fastapi/urwid (CLI-Tools)
+# werden absichtlich NICHT installiert – wir nutzen Flask statt fastapi.
+rm -rf "$VENV"
+$PYTHON -m venv "$VENV"
+"$VENV/bin/pip" install --upgrade pip setuptools wheel -q -i https://pypi.org/simple
 "$VENV/bin/pip" install flask flask-cors -q
-"$VENV/bin/pip" install xbox-smartglass-core --no-build-isolation -q
+"$VENV/bin/pip" install 'xbox-smartglass-core==1.3.0' --no-deps -q
+"$VENV/bin/pip" install \
+  'construct==2.10.56' \
+  'cryptography' \
+  'dpkt' \
+  'pydantic<2' \
+  'xbox-webapi' \
+  'aioconsole' \
+  'requests' \
+  'evdev' \
+  --no-build-isolation -q
 echo "      Pakete installiert."
 
 # ── Frontend bauen ─────────────────────────────────────────────────
@@ -79,7 +93,12 @@ echo "      Build abgeschlossen."
 echo "[4/6] systemd Services einrichten..."
 
 for svc in xbox-webapp xbox-keepalive; do
-  sudo cp "$PROJECT/systemd/${svc}.service" /etc/systemd/system/
+  sudo sed \
+    -e "s|__USER__|$(whoami)|g" \
+    -e "s|__PROJECT__|$PROJECT|g" \
+    -e "s|__VENV__|$VENV|g" \
+    "$PROJECT/systemd/${svc}.service" \
+    | sudo tee /etc/systemd/system/${svc}.service > /dev/null
 done
 
 sudo systemctl daemon-reload

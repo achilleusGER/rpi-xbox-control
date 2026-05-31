@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from xbox_client import XboxClient
@@ -24,7 +24,8 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-app = Flask(__name__)
+DIST = Path(__file__).parent / "dist"
+app = Flask(__name__, static_folder=str(DIST) if DIST.exists() else None)
 CORS(app)   # erlaubt Zugriff vom Vite-Dev-Server (Port 5173) und Produktion
 
 client = XboxClient()
@@ -217,6 +218,19 @@ def stop_sequence():
 def is_running():
     running = bool(_seq_thread and _seq_thread.is_alive() and not _stop_event.is_set())
     return jsonify({"running": running})
+
+
+# ── Frontend-Serving ─────────────────────────────────────────────────────────
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path: str):
+    """Liefert das gebaute React-Frontend aus dem dist/-Verzeichnis."""
+    if DIST.exists():
+        if path and (DIST / path).exists():
+            return send_from_directory(str(DIST), path)
+        return send_from_directory(str(DIST), "index.html")
+    return "<h2>Frontend nicht gebaut. Bitte <code>npm run build</code> ausführen.</h2>", 503
 
 
 # ── Start ─────────────────────────────────────────────────────────────────────

@@ -1,0 +1,14 @@
+[Unit]
+Description=Xbox Controller USB Keep-Alive
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__PROJECT__
+ExecStart=__VENV__/bin/python keepalive.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
