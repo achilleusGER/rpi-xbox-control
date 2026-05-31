@@ -20,6 +20,7 @@ sudo apt-get update -q || true
 sudo apt-get install -y \
   python3-pip python3-setuptools python3-venv build-essential \
   python3-cryptography \
+  authbind \
   git curl
 
 # ── Python-Version für das venv ────────────────────────────────────────────
@@ -101,6 +102,11 @@ for svc in xbox-webapp xbox-keepalive; do
     | sudo tee /etc/systemd/system/${svc}.service > /dev/null
 done
 
+# authbind: erlaubt dem User das Binden auf Port 80 ohne Root
+sudo touch /etc/authbind/byport/80
+sudo chmod 500 /etc/authbind/byport/80
+sudo chown "$USER" /etc/authbind/byport/80
+
 sudo systemctl daemon-reload
 sudo systemctl enable xbox-webapp xbox-keepalive
 echo "      Services registriert."
@@ -126,6 +132,6 @@ echo ""
 echo "  Danach Services starten:"
 echo "  sudo systemctl start xbox-webapp xbox-keepalive"
 echo ""
-echo "  Web-Interface: http://$(hostname -I | awk '{print $1}'):8000"
+echo "  Web-Interface: http://$(hostname -I | awk '{print $1}'):80"
 echo ""
 echo "  WICHTIG: Danach neu einloggen (Gruppe 'input' aktiv)"

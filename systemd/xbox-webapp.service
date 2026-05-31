@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=__USER__
 WorkingDirectory=__PROJECT__
-ExecStart=__VENV__/bin/python app.py
+ExecStart=/usr/bin/authbind --deep __VENV__/bin/python app.py
 Restart=on-failure
 RestartSec=5
 
