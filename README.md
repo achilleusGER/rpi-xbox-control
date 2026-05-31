@@ -69,7 +69,7 @@ sudo systemctl start xbox-keepalive
 
 ### Fertig
 
-Web-Interface: `http://<PI-IP>:8080`
+Web-Interface: `http://<PI-IP>:8000`
 
 ## Voraussetzungen Xbox
 
