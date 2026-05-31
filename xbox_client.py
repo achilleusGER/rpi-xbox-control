@@ -1,10 +1,19 @@
 """
 xbox_client.py
 Wrapper um xbox-smartglass-core für Discovery, Verbindung und Button-Eingaben.
+
+WICHTIG – Event-Loop-Design:
+  SmartGlass nutzt asyncio intern (UDP-Transport, Heartbeats, Protokoll-State).
+  Alle diese Objekte sind an genau EINEN Event Loop gebunden.
+  Deshalb läuft hier EIN persistenter Loop in einem Hintergrundthread.
+  Alle Operationen werden per asyncio.run_coroutine_threadsafe() dorthin übergeben.
+  Früheres Problem: new_event_loop() pro Aufruf → Protokoll-Objekte gehören zum
+  alten (geschlossenen) Loop → send_button gibt keinen Fehler, tut aber nichts.
 """
 
 import asyncio
 import logging
+import threading
 from typing import Optional
 
 from xbox.sg.console import Console
@@ -35,11 +44,31 @@ BUTTON_MAP: dict[str, GamePadButton] = {
 # ── Client-Klasse ─────────────────────────────────────────────────────────────
 
 class XboxClient:
-    """Verwaltet eine einzelne Verbindung zu einer Xbox-Konsole."""
+    """
+    Verwaltet eine einzelne Verbindung zu einer Xbox-Konsole.
+    Alle async-Operationen laufen auf einem persistenten Hintergrundloop.
+    """
 
     def __init__(self) -> None:
         self._console: Optional[Console] = None
-        self._discovered: dict[str, Console] = {}   # liveid → Console
+        self._discovered: dict[str, Console] = {}
+
+        # Persistenter Event Loop in eigenem Thread
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(
+            target=self._loop.run_forever,
+            daemon=True,
+            name="xbox-asyncio",
+        )
+        self._loop_thread.start()
+        log.info("XboxClient: persistenter asyncio-Loop gestartet.")
+
+    # ── Internes ─────────────────────────────────────────────────────────────
+
+    def _run(self, coro, timeout: float = 30.0):
+        """Übergibt eine Coroutine an den Hintergrundloop und wartet auf das Ergebnis."""
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout=timeout)
 
     # ── Discovery ────────────────────────────────────────────────────────────
 
@@ -49,14 +78,10 @@ class XboxClient:
         Gibt eine Liste von Dicts zurück: [{liveid, name, address}, ...]
         """
         self._discovered = {}
-        loop = asyncio.new_event_loop()
-        try:
-            consoles: list[Console] = loop.run_until_complete(
-                Console.discover(timeout=timeout)
-            )
-        finally:
-            loop.close()
-
+        consoles: list[Console] = self._run(
+            Console.discover(timeout=timeout),
+            timeout=timeout + 5,
+        )
         for c in consoles:
             self._discovered[c.liveid] = c
             log.info("Gefunden: %s (%s) @ %s", c.name, c.liveid, c.address)
@@ -74,25 +99,23 @@ class XboxClient:
         if console is None:
             raise ValueError(f"Konsole '{liveid}' nicht in Discovery-Ergebnissen.")
 
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(console.connect())
-        finally:
-            loop.close()
+        self._run(console.connect())
 
         # InputManager registrieren – stellt gamepad_input() bereit
         console.add_manager(InputManager)
 
         self._console = console
         log.info("Verbunden mit: %s", console.name)
-        return {"liveid": console.liveid, "name": console.name, "address": console.address}
+        return {
+            "liveid":  console.liveid,
+            "name":    console.name,
+            "address": console.address,
+        }
 
     def disconnect(self) -> None:
         if self._console:
             try:
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(self._console.disconnect())
-                loop.close()
+                self._run(self._console.disconnect())
             except Exception as e:
                 log.warning("Fehler beim Trennen: %s", e)
             finally:
@@ -107,8 +130,8 @@ class XboxClient:
         if not self._console:
             return None
         return {
-            "liveid": self._console.liveid,
-            "name":   self._console.name,
+            "liveid":  self._console.liveid,
+            "name":    self._console.name,
             "address": self._console.address,
         }
 
@@ -121,17 +144,15 @@ class XboxClient:
 
         btn = BUTTON_MAP.get(button_name)
         if btn is None:
-            raise ValueError(f"Unbekannter Button: '{button_name}'. "
-                             f"Gültig: {list(BUTTON_MAP.keys())}")
+            raise ValueError(
+                f"Unbekannter Button: '{button_name}'. "
+                f"Gültig: {list(BUTTON_MAP.keys())}"
+            )
 
         async def _press():
             await self._console.gamepad_input(btn)
-            await self._console.wait(0.1)          # kurz gedrückt halten
+            await asyncio.sleep(0.1)                              # kurz gedrückt halten
             await self._console.gamepad_input(GamePadButton.Clear)  # loslassen
 
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(_press())
-        finally:
-            loop.close()
-        log.debug("Button gesendet: %s", button_name)
+        self._run(_press())
+        log.info("Button gesendet: %s", button_name)
