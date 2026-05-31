@@ -48,8 +48,10 @@ _LOG_RING: deque = deque(maxlen=80)   # letzte 80 Einträge
 class _RingHandler(logging.Handler):
     """Schreibt alle Log-Einträge (ab INFO) in den Ring-Buffer."""
     def emit(self, record: logging.LogRecord) -> None:
+        import datetime
+        ts = datetime.datetime.fromtimestamp(record.created).strftime("%H:%M:%S")
         _LOG_RING.append({
-            "ts":    self.formatTime(record, "%H:%M:%S"),
+            "ts":    ts,
             "level": record.levelname,
             "name":  record.name,
             "msg":   record.getMessage(),
