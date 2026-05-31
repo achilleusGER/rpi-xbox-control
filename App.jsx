@@ -578,9 +578,9 @@ export default function App() {
 
       {/* Main views */}
       <main className="main">
-        {tab === "control"   && <ControlView />}
-        {tab === "sequences" && <SequencesView />}
-        {tab === "editor"    && <EditorView />}
+        {tab === "control"   && ControlView()}
+        {tab === "sequences" && SequencesView()}
+        {tab === "editor"    && EditorView()}
       </main>
 
       {/* Bottom navigation */}
