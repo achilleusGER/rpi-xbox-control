@@ -179,6 +179,24 @@ body{background:var(--cp)}
 .flex1{flex:1}
 .qa-grid{display:flex;flex-wrap:wrap;gap:var(--s2);margin-bottom:var(--s3)}
 .wait-grid{display:flex;flex-wrap:wrap;gap:var(--s2)}
+/* Toggle-Zeile */
+.tog-row{display:flex;align-items:center;justify-content:space-between;gap:var(--s4);min-height:44px}
+.tog-row+.tog-row{border-top:1px solid var(--cb1);padding-top:var(--s3);margin-top:var(--s3)}
+.tog-row__info{min-width:0}
+.tog-row__lbl{font-size:var(--ts);font-weight:500;color:var(--ct1)}
+.tog-row__sub{font-size:var(--tx);color:var(--ct3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Switch */
+.sw{position:relative;width:46px;height:26px;flex-shrink:0}
+.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw__t{position:absolute;inset:0;border-radius:var(--rfu);background:var(--cb2);cursor:pointer;transition:background var(--db) var(--eo)}
+.sw__t::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:var(--rfu);background:#fff;transition:transform var(--db) var(--eo)}
+.sw input:checked+.sw__t{background:var(--ca)}
+.sw input:checked+.sw__t::after{transform:translateX(20px)}
+.sw input:focus-visible+.sw__t{outline:2px solid var(--cf);outline-offset:2px}
+/* Controller-Dot */
+.cdot{width:10px;height:10px;border-radius:var(--rfu);flex-shrink:0;transition:background var(--db) var(--eo),box-shadow var(--db) var(--eo)}
+.cdot--ok{background:var(--ca);box-shadow:0 0 8px oklch(43% .17 142 / .7)}
+.cdot--err{background:var(--cdr)}
 /* Responsive */
 @media(min-width:480px){.view{padding:var(--s5)}}
 @media(min-width:768px){.view{max-width:640px;margin:0 auto}}
@@ -271,12 +289,18 @@ function StepChip({ step, index, active, onDelete, onMoveUp, onMoveDown, onEdit,
 
 export default function App() {
   // Connection
-  const [consoles, setConsoles]       = useState([]);
-  const [scanning, setScanning]       = useState(false);
-  const [connected, setConnected]     = useState(false);
-  const [consoleName, setConsoleName] = useState("");
-  const [statusMsg, setStatusMsg]     = useState("Nicht verbunden");
-  const [statusOk, setStatusOk]       = useState(false);
+  const [consoles, setConsoles]             = useState([]);
+  const [scanning, setScanning]             = useState(false);
+  const [connected, setConnected]           = useState(false);
+  const [consoleName, setConsoleName]       = useState("");
+  const [statusMsg, setStatusMsg]           = useState("Nicht verbunden");
+  const [statusOk, setStatusOk]             = useState(false);
+
+  // USB Controller + Keepalive
+  const [ctrlConnected, setCtrlConnected]   = useState(false);
+  const [ctrlName, setCtrlName]             = useState("");
+  const [keepaliveOn, setKeepaliveOn]       = useState(false);
+  const [keepaliveBusy, setKeepaliveBusy]   = useState(false);
 
   // Sequences
   const [sequences, setSequences]     = useState({});
@@ -323,7 +347,27 @@ export default function App() {
         setStatusMsg("Nicht verbunden");
         setStatusOk(false);
       }
+      // USB Controller + Keepalive
+      if (d.controller) {
+        setCtrlConnected(d.controller.connected);
+        setCtrlName(d.controller.name || "");
+      }
+      if (d.keepalive) {
+        setKeepaliveOn(d.keepalive.enabled);
+      }
     } catch { /* Pi unerreichbar */ }
+  }
+
+  async function toggleKeepalive(val) {
+    setKeepaliveBusy(true);
+    try {
+      const d = await api("POST", "/keepalive", { enabled: val });
+      setKeepaliveOn(d.enabled);
+    } catch (e) {
+      setStatus("Keepalive-Fehler: " + e.message, false);
+    } finally {
+      setKeepaliveBusy(false);
+    }
   }
 
   async function checkRunning() {
@@ -723,6 +767,39 @@ export default function App() {
               Suche nach Xbox-Konsolen im Netzwerk.
             </p>
           )}
+        </div>
+
+        {/* USB Controller + Keepalive */}
+        <div className="card">
+          <div className="card__head">USB Controller</div>
+
+          {/* Verbindungsstatus */}
+          <div className="tog-row">
+            <div className="tog-row__info">
+              <div className="tog-row__lbl">Verbindung</div>
+              <div className="tog-row__sub">
+                {ctrlConnected ? (ctrlName || "Xbox Controller") : "Kein Controller erkannt"}
+              </div>
+            </div>
+            <div className={`cdot ${ctrlConnected ? "cdot--ok" : "cdot--err"}`} />
+          </div>
+
+          {/* Wachhalten-Toggle */}
+          <div className="tog-row">
+            <div className="tog-row__info">
+              <div className="tog-row__lbl">Wachhalten</div>
+              <div className="tog-row__sub">Verhindert automatisches Trennen (Rumble-Ping alle 25 s)</div>
+            </div>
+            <label className="sw" aria-label="Wachhalten">
+              <input
+                type="checkbox"
+                checked={keepaliveOn}
+                disabled={keepaliveBusy}
+                onChange={e => toggleKeepalive(e.target.checked)}
+              />
+              <span className="sw__t" />
+            </label>
+          </div>
         </div>
 
         {/* Controller */}

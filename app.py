@@ -14,6 +14,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
+from keepalive import KeepaliveManager, controller_info
 from xbox_client import XboxClient
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -31,10 +32,61 @@ CORS(app)   # erlaubt Zugriff vom Vite-Dev-Server (Port 5173) und Produktion
 client = XboxClient()
 
 SEQUENCES_FILE = Path(__file__).parent / "sequences.json"
+SETTINGS_FILE  = Path(__file__).parent / "settings.json"
 
 # Laufende Sequenz
 _seq_thread: threading.Thread | None = None
 _stop_event = threading.Event()
+
+# ── Einstellungen ─────────────────────────────────────────────────────────────
+
+def _load_settings() -> dict:
+    if SETTINGS_FILE.exists():
+        try:
+            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"keepalive": False}
+
+
+def _save_settings(patch: dict) -> None:
+    try:
+        data = _load_settings()
+        data.update(patch)
+        SETTINGS_FILE.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception as e:
+        log.warning("Einstellungen speichern fehlgeschlagen: %s", e)
+
+
+# ── Keepalive-Manager ─────────────────────────────────────────────────────────
+
+keepalive_mgr = KeepaliveManager()
+_settings = _load_settings()
+if _settings.get("keepalive"):
+    keepalive_mgr.set_enabled(True)
+
+# Controller-Status-Cache (wird genutzt wenn keepalive nicht aktiv ist)
+_ctrl_cache: dict = {"ts": 0.0, "data": {"connected": False, "name": None}}
+_CTRL_TTL = 5.0   # Sekunden
+
+
+def _controller_status() -> dict:
+    """Liefert Controller-Status – aus Manager-Cache oder frisch abgefragt."""
+    if keepalive_mgr.running:
+        return {
+            "connected": keepalive_mgr.controller_connected,
+            "name": keepalive_mgr.controller_name,
+        }
+    now = time.monotonic()
+    if now - _ctrl_cache["ts"] > _CTRL_TTL:
+        try:
+            _ctrl_cache["data"] = controller_info()
+        except Exception:
+            pass
+        _ctrl_cache["ts"] = now
+    return _ctrl_cache["data"]
 
 
 # ── Hilfsfunktionen ───────────────────────────────────────────────────────────
@@ -81,9 +133,20 @@ def execute_sequence(steps: list, repeat: bool) -> None:
 @app.get("/api/status")
 def status():
     return jsonify({
-        "connected": client.connected,
-        "console": client.console_info,
+        "connected":  client.connected,
+        "console":    client.console_info,
+        "controller": _controller_status(),
+        "keepalive":  {"enabled": keepalive_mgr.enabled},
     })
+
+
+@app.post("/api/keepalive")
+def set_keepalive():
+    enabled = bool((request.json or {}).get("enabled", False))
+    keepalive_mgr.set_enabled(enabled)
+    _save_settings({"keepalive": enabled})
+    log.info("Keepalive %s.", "aktiviert" if enabled else "deaktiviert")
+    return jsonify({"enabled": enabled})
 
 
 @app.post("/api/scan")
