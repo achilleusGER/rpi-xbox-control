@@ -73,6 +73,17 @@ async def async_main():
         print(f"✓ Tokens gespeichert: {tokens_file}")
 
 
+def _local_ip() -> str:
+    """Ermittelt die LAN-IP des Pi."""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "localhost"
+
+
 def main():
     aio_app = web.Application()
     aio_app.add_routes([web.get("/auth/callback", auth_callback)])
@@ -80,9 +91,16 @@ def main():
 
     loop = asyncio.get_event_loop()
     loop.run_until_complete(runner.setup())
-    site = web.TCPSite(runner, "localhost", 8080)
+    # 0.0.0.0 → erreichbar über LAN-IP, nicht nur localhost
+    site = web.TCPSite(runner, "0.0.0.0", 8080)
     loop.run_until_complete(site.start())
-    print("OAuth-Callback-Server läuft auf http://localhost:8080")
+
+    pi_ip = _local_ip()
+    print(f"\nCallback-Server läuft auf http://{pi_ip}:8080")
+    print(f"\n⚠  Microsoft leitet nach dem Login auf localhost:8080/auth/callback um.")
+    print(f"   Ersetze 'localhost' durch '{pi_ip}' und öffne die URL im Browser:\n")
+    print(f"   http://{pi_ip}:8080/auth/callback?code=...\n")
+
     loop.run_until_complete(async_main())
 
 
