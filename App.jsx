@@ -197,6 +197,17 @@ body{background:var(--cp)}
 .cdot{width:10px;height:10px;border-radius:var(--rfu);flex-shrink:0;transition:background var(--db) var(--eo),box-shadow var(--db) var(--eo)}
 .cdot--ok{background:var(--ca);box-shadow:0 0 8px oklch(43% .17 142 / .7)}
 .cdot--err{background:var(--cdr)}
+/* Log panel */
+.logpanel{font-family:var(--fm);font-size:var(--tx);display:flex;flex-direction:column;gap:2px}
+.logline{display:flex;gap:var(--s2);padding:var(--s2) var(--s3);border-radius:var(--rsm);line-height:1.4;word-break:break-all}
+.logline--ERROR,.logline--CRITICAL{background:oklch(14% .05 15);color:var(--cdr)}
+.logline--WARNING{background:oklch(14% .04 65);color:var(--cwa)}
+.logline--INFO{color:var(--ct2)}
+.logline--DEBUG{color:var(--ct3)}
+.logline__ts{color:var(--ct3);flex-shrink:0;min-width:54px}
+.logline__lvl{flex-shrink:0;min-width:44px;font-weight:600}
+.logline__name{color:var(--ct3);flex-shrink:0;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.logline__msg{flex:1}
 /* Responsive */
 @media(min-width:480px){.view{padding:var(--s5)}}
 @media(min-width:768px){.view{max-width:640px;margin:0 auto}}
@@ -326,14 +337,28 @@ export default function App() {
   // Navigation
   const [tab, setTab] = useState("control");
 
+  // Logs
+  const [logs, setLogs]         = useState([]);
+  const [logsError, setLogsError] = useState(false);
+  const logBottomRef = useRef(null);
+
   // ── Init ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
     loadSequences();
     checkStatus();
-    const t = setInterval(() => { checkStatus(); checkRunning(); }, 5000);
+    fetchLogs();
+    const t = setInterval(() => { checkStatus(); checkRunning(); fetchLogs(); }, 5000);
     return () => clearInterval(t);
   }, []);
+
+  // Beim Wechsel auf Logs-Tab sofort scrollen
+  useEffect(() => {
+    if (tab === "logs") {
+      fetchLogs();
+      setTimeout(() => logBottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    }
+  }, [tab]);
 
   async function checkStatus() {
     try {
@@ -356,6 +381,16 @@ export default function App() {
         setKeepaliveOn(d.keepalive.enabled);
       }
     } catch { /* Pi unerreichbar */ }
+  }
+
+  async function fetchLogs() {
+    try {
+      const d = await api("GET", "/logs");
+      setLogs(d);
+      setLogsError(false);
+    } catch {
+      setLogsError(true);
+    }
   }
 
   async function toggleKeepalive(val) {
@@ -625,6 +660,7 @@ export default function App() {
         {tab === "control"   && ControlView()}
         {tab === "sequences" && SequencesView()}
         {tab === "editor"    && EditorView()}
+        {tab === "logs"      && LogsView()}
       </main>
 
       {/* Bottom navigation */}
@@ -633,6 +669,8 @@ export default function App() {
           { id: "control",   icon: "🎮", label: "Steuerung" },
           { id: "sequences", icon: "📋", label: "Sequenzen" },
           { id: "editor",    icon: "✏️",  label: "Editor", badge: isDirty },
+          { id: "logs",      icon: "📄", label: "Logs",
+            badge: logs.some(l => l.level === "ERROR" || l.level === "CRITICAL") },
         ].map(t => (
           <button
             key={t.id}
@@ -921,6 +959,48 @@ export default function App() {
 
         {/* FAB */}
         <button className="fab" onClick={openNew} aria-label="Neue Sequenz">+</button>
+      </div>
+    );
+  }
+
+  // ── View: Logs ──────────────────────────────────────────────────────
+
+  function LogsView() {
+    const LEVEL_ICON = { ERROR: "✕", CRITICAL: "✕", WARNING: "⚠", INFO: "·", DEBUG: "·" };
+    return (
+      <div className="view">
+        <div style={{ display: "flex", alignItems: "center", marginBottom: "var(--s4)", gap: "var(--s3)" }}>
+          <h1 className="sec-title" style={{ margin: 0, flex: 1 }}>Logs</h1>
+          <button className="btn btn--sm btn--ghost" onClick={fetchLogs}>⟳ Aktualisieren</button>
+          <button className="btn btn--sm btn--ghost" onClick={() => setLogs([])}>🗑 Leeren</button>
+        </div>
+
+        {logsError && (
+          <div style={{ color: "var(--cdr)", fontSize: "var(--ts)", marginBottom: "var(--s4)" }}>
+            ✕ Logs nicht erreichbar
+          </div>
+        )}
+
+        {logs.length === 0 ? (
+          <div className="empty">
+            <span className="empty__ico">📄</span>
+            <span className="empty__txt">Noch keine Log-Einträge.</span>
+          </div>
+        ) : (
+          <div className="card" style={{ padding: "var(--s3)" }}>
+            <div className="logpanel">
+              {logs.map((l, i) => (
+                <div key={i} className={`logline logline--${l.level}`}>
+                  <span className="logline__ts">{l.ts}</span>
+                  <span className="logline__lvl">{LEVEL_ICON[l.level] || "·"} {l.level}</span>
+                  <span className="logline__name">{l.name}</span>
+                  <span className="logline__msg">{l.msg}</span>
+                </div>
+              ))}
+              <div ref={logBottomRef} />
+            </div>
+          </div>
+        )}
       </div>
     );
   }

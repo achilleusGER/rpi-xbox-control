@@ -38,6 +38,28 @@ SETTINGS_FILE  = Path(__file__).parent / "settings.json"
 _seq_thread: threading.Thread | None = None
 _stop_event = threading.Event()
 
+# ── In-Memory Log-Ring ────────────────────────────────────────────────────────
+
+from collections import deque
+
+_LOG_RING: deque = deque(maxlen=80)   # letzte 80 Einträge
+
+
+class _RingHandler(logging.Handler):
+    """Schreibt alle Log-Einträge (ab INFO) in den Ring-Buffer."""
+    def emit(self, record: logging.LogRecord) -> None:
+        _LOG_RING.append({
+            "ts":    self.formatTime(record, "%H:%M:%S"),
+            "level": record.levelname,
+            "name":  record.name,
+            "msg":   record.getMessage(),
+        })
+
+
+_ring_handler = _RingHandler()
+_ring_handler.setLevel(logging.INFO)
+logging.getLogger().addHandler(_ring_handler)
+
 # ── Einstellungen ─────────────────────────────────────────────────────────────
 
 def _load_settings() -> dict:
@@ -147,6 +169,12 @@ def set_keepalive():
     _save_settings({"keepalive": enabled})
     log.info("Keepalive %s.", "aktiviert" if enabled else "deaktiviert")
     return jsonify({"enabled": enabled})
+
+
+@app.get("/api/logs")
+def get_logs():
+    """Liefert die letzten Log-Einträge aus dem In-Memory-Ring."""
+    return jsonify(list(_LOG_RING))
 
 
 @app.post("/api/scan")

@@ -9,6 +9,7 @@ from typing import Optional
 
 from xbox.sg.console import Console
 from xbox.sg.enum import GamePadButton
+from xbox.sg.manager import InputManager
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +80,9 @@ class XboxClient:
         finally:
             loop.close()
 
+        # InputManager registrieren – stellt gamepad_input() bereit
+        console.add_manager(InputManager)
+
         self._console = console
         log.info("Verbunden mit: %s", console.name)
         return {"liveid": console.liveid, "name": console.name, "address": console.address}
@@ -120,9 +124,14 @@ class XboxClient:
             raise ValueError(f"Unbekannter Button: '{button_name}'. "
                              f"Gültig: {list(BUTTON_MAP.keys())}")
 
+        async def _press():
+            await self._console.gamepad_input(btn)
+            await self._console.wait(0.1)          # kurz gedrückt halten
+            await self._console.gamepad_input(GamePadButton.Clear)  # loslassen
+
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(self._console.send_gamepad_button(btn))
+            loop.run_until_complete(_press())
         finally:
             loop.close()
         log.debug("Button gesendet: %s", button_name)
