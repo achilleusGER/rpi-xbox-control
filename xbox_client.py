@@ -2,22 +2,24 @@
 xbox_client.py
 Wrapper um xbox-smartglass-core für Discovery, Verbindung und Button-Eingaben.
 
-WICHTIG – Event-Loop-Design:
-  SmartGlass nutzt asyncio intern (UDP-Transport, Heartbeats, Protokoll-State).
-  Alle diese Objekte sind an genau EINEN Event Loop gebunden.
-  Deshalb läuft hier EIN persistenter Loop in einem Hintergrundthread.
-  Alle Operationen werden per asyncio.run_coroutine_threadsafe() dorthin übergeben.
-  Früheres Problem: new_event_loop() pro Aufruf → Protokoll-Objekte gehören zum
-  alten (geschlossenen) Loop → send_button gibt keinen Fehler, tut aber nichts.
+Design-Entscheidungen:
+  - EIN persistenter asyncio-Loop im Hintergrundthread: alle SmartGlass-Objekte
+    (UDP-Transport, Protokoll-State, Heartbeats) leben auf diesem Loop.
+    Frühere Variante mit new_event_loop() pro Aufruf → Buttons kamen nie an.
+  - Authentifizierter Connect (XSTS-Token): anonyme Verbindung erlaubt keinen
+    SystemInput-Channel → Gamepad-Befehle werden ignoriert.
+  - connected-Property prüft ConnectionState (nicht nur is not None):
+    Erkennt Xbox-Disconnect auch wenn self._console noch gesetzt ist.
 """
 
 import asyncio
 import logging
 import threading
+from pathlib import Path
 from typing import Optional
 
 from xbox.sg.console import Console
-from xbox.sg.enum import GamePadButton
+from xbox.sg.enum import ConnectionState, GamePadButton
 from xbox.sg.manager import InputManager
 
 log = logging.getLogger(__name__)
@@ -39,6 +41,42 @@ BUTTON_MAP: dict[str, GamePadButton] = {
     "LB":    GamePadButton.LeftShoulder,
     "RB":    GamePadButton.RightShoulder,
 }
+
+
+# ── Authentifizierung ─────────────────────────────────────────────────────────
+
+async def _load_auth() -> tuple[str, str]:
+    """
+    Lädt gespeicherte Tokens, erneuert sie bei Bedarf.
+    Gibt (userhash, xsts_token_string) zurück.
+    Wirft RuntimeError wenn keine Tokens vorhanden sind.
+    """
+    from aiohttp import ClientSession
+    from xbox.webapi.authentication.manager import AuthenticationManager
+    from xbox.webapi.authentication.models import OAuth2TokenResponse
+    from xbox.webapi.scripts import CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, TOKENS_FILE
+
+    tokens_file = Path(TOKENS_FILE)
+    if not tokens_file.exists():
+        raise RuntimeError(
+            f"Keine Tokens gefunden ({tokens_file}). "
+            "Bitte zuerst: python xbox_auth.py"
+        )
+
+    async with ClientSession() as session:
+        mgr = AuthenticationManager(session, CLIENT_ID, CLIENT_SECRET, REDIRECT_URI)
+        mgr.oauth = OAuth2TokenResponse.parse_raw(tokens_file.read_text())
+        try:
+            await mgr.refresh_tokens()
+        except Exception as e:
+            raise RuntimeError(
+                f"Token-Erneuerung fehlgeschlagen: {e}. "
+                "Bitte erneut authentifizieren: python xbox_auth.py"
+            ) from e
+
+        xsts = mgr.xsts_token
+        log.info("Auth-Token geladen (gültig bis %s)", xsts.not_after)
+        return str(xsts.userhash), str(xsts.token)
 
 
 # ── Client-Klasse ─────────────────────────────────────────────────────────────
@@ -66,17 +104,14 @@ class XboxClient:
     # ── Internes ─────────────────────────────────────────────────────────────
 
     def _run(self, coro, timeout: float = 30.0):
-        """Übergibt eine Coroutine an den Hintergrundloop und wartet auf das Ergebnis."""
+        """Übergibt eine Coroutine an den Hintergrundloop und wartet synchron."""
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result(timeout=timeout)
 
     # ── Discovery ────────────────────────────────────────────────────────────
 
     def discover(self, timeout: int = 5) -> list[dict]:
-        """
-        Sucht Xbox-Konsolen im lokalen Netzwerk per UDP-Broadcast.
-        Gibt eine Liste von Dicts zurück: [{liveid, name, address}, ...]
-        """
+        """Sucht Xbox-Konsolen im LAN per UDP-Broadcast."""
         self._discovered = {}
         consoles: list[Console] = self._run(
             Console.discover(timeout=timeout),
@@ -94,18 +129,37 @@ class XboxClient:
     # ── Verbindung ───────────────────────────────────────────────────────────
 
     def connect(self, liveid: str) -> dict:
-        """Verbindet mit einer zuvor entdeckten Konsole."""
+        """Verbindet authentifiziert mit einer zuvor entdeckten Konsole."""
         console = self._discovered.get(liveid)
         if console is None:
             raise ValueError(f"Konsole '{liveid}' nicht in Discovery-Ergebnissen.")
 
-        self._run(console.connect())
+        # Vorherige Verbindung sauber trennen (verhindert "Already connected")
+        if self._console is not None:
+            log.info("Trenne bestehende Verbindung vor neuem Connect.")
+            try:
+                self._run(self._console.disconnect(), timeout=5)
+            except Exception as e:
+                log.warning("Trennen fehlgeschlagen (ignoriert): %s", e)
+            self._console = None
+
+        # XSTS-Token laden
+        userhash, xsts_token = self._run(_load_auth())
+
+        # Authentifizierter Connect
+        state = self._run(
+            console.connect(userhash=userhash, xsts_token=xsts_token)
+        )
+        log.info("Verbindungsstatus nach connect(): %s", state)
+
+        if state != ConnectionState.Connected:
+            raise RuntimeError(f"Verbindung fehlgeschlagen: {state}")
 
         # InputManager registrieren – stellt gamepad_input() bereit
         console.add_manager(InputManager)
 
         self._console = console
-        log.info("Verbunden mit: %s", console.name)
+        log.info("Verbunden mit: %s (auth)", console.name)
         return {
             "liveid":  console.liveid,
             "name":    console.name,
@@ -115,7 +169,7 @@ class XboxClient:
     def disconnect(self) -> None:
         if self._console:
             try:
-                self._run(self._console.disconnect())
+                self._run(self._console.disconnect(), timeout=5)
             except Exception as e:
                 log.warning("Fehler beim Trennen: %s", e)
             finally:
@@ -123,7 +177,13 @@ class XboxClient:
 
     @property
     def connected(self) -> bool:
-        return self._console is not None
+        """True nur wenn Verbindung aktiv und ConnectionState == Connected."""
+        if self._console is None:
+            return False
+        try:
+            return self._console.connection_state == ConnectionState.Connected
+        except Exception:
+            return False
 
     @property
     def console_info(self) -> Optional[dict]:
@@ -139,7 +199,7 @@ class XboxClient:
 
     def send_button(self, button_name: str) -> None:
         """Sendet einen einzelnen Button-Druck an die Konsole."""
-        if not self._console:
+        if not self.connected:
             raise RuntimeError("Nicht verbunden.")
 
         btn = BUTTON_MAP.get(button_name)
@@ -151,8 +211,8 @@ class XboxClient:
 
         async def _press():
             await self._console.gamepad_input(btn)
-            await asyncio.sleep(0.1)                              # kurz gedrückt halten
-            await self._console.gamepad_input(GamePadButton.Clear)  # loslassen
+            await asyncio.sleep(0.1)                               # kurz gedrückt halten
+            await self._console.gamepad_input(GamePadButton.Clear) # loslassen
 
         self._run(_press())
         log.info("Button gesendet: %s", button_name)
