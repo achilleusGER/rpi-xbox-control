@@ -153,27 +153,28 @@ class XboxClient:
                  console.authenticated_users_allowed,
                  console.console_users_allowed)
 
-        # ── Schritt 1: Anonymer Verbindungsversuch ────────────────────────────
+        # ── Schritt 1: Authentifizierter Connect (Gamepad-Input braucht Paired) ──
         state = None
-        if console.anonymous_connection_allowed:
-            log.info("Versuche anonyme Verbindung...")
-            try:
-                state = self._run(console.connect(), timeout=15)
-                log.info("Anonymer Connect: state=%s  pairing=%s",
-                         state, console.pairing_state)
-            except Exception as e:
-                log.warning("Anonymer Connect fehlgeschlagen: %s", e)
-                state = None
-
-        # ── Schritt 2: Authentifizierter Fallback ─────────────────────────────
-        if state != ConnectionState.Connected:
-            log.info("Versuche authentifizierten Connect (XSTS)...")
+        try:
+            log.info("Lade XSTS-Token für authentifizierten Connect...")
             userhash, xsts_token = self._run(_load_auth())
+            log.info("Versuche authentifizierten Connect (bis 90s)...")
             state = self._run(
                 console.connect(userhash=userhash, xsts_token=xsts_token),
                 timeout=90,
             )
             log.info("Auth-Connect: state=%s  pairing=%s", state, console.pairing_state)
+        except Exception as e:
+            log.warning("Auth-Connect fehlgeschlagen (%s) – versuche anonym...", e)
+            state = None
+
+        # ── Schritt 2: Anonymer Fallback (NotPaired – Buttons funktionieren evtl. nicht) ──
+        if state != ConnectionState.Connected:
+            if not console.anonymous_connection_allowed:
+                raise RuntimeError("Auth-Connect fehlgeschlagen und anonyme Verbindung nicht erlaubt.")
+            log.warning("Anonymer Fallback – pairing=NotPaired, Gamepad-Input wird von Xbox evtl. ignoriert.")
+            state = self._run(console.connect(), timeout=15)
+            log.info("Anonymer Connect: state=%s  pairing=%s", state, console.pairing_state)
 
         if state != ConnectionState.Connected:
             raise RuntimeError(f"Verbindung fehlgeschlagen: state={state}")
