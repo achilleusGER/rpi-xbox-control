@@ -153,28 +153,17 @@ class XboxClient:
                  console.authenticated_users_allowed,
                  console.console_users_allowed)
 
-        # ── Schritt 1: Authentifizierter Connect (Gamepad-Input braucht Paired) ──
+        # ── Verbindung herstellen ────────────────────────────────────────────────
+        # Anonym verbinden (schnell, zuverlässig).
+        # Auth-Connect scheitert weil Xbox auf fragmentierte XSTS-Token-Pakete
+        # (>1024 Byte) keine ConnectResponse schickt – bekanntes Firmware-Problem.
         state = None
+        log.info("Verbinde anonym...")
         try:
-            log.info("Lade XSTS-Token für authentifizierten Connect...")
-            userhash, xsts_token = self._run(_load_auth())
-            log.info("Versuche authentifizierten Connect (bis 90s)...")
-            state = self._run(
-                console.connect(userhash=userhash, xsts_token=xsts_token),
-                timeout=90,
-            )
-            log.info("Auth-Connect: state=%s  pairing=%s", state, console.pairing_state)
-        except Exception as e:
-            log.warning("Auth-Connect fehlgeschlagen (%s) – versuche anonym...", e)
-            state = None
-
-        # ── Schritt 2: Anonymer Fallback (NotPaired – Buttons funktionieren evtl. nicht) ──
-        if state != ConnectionState.Connected:
-            if not console.anonymous_connection_allowed:
-                raise RuntimeError("Auth-Connect fehlgeschlagen und anonyme Verbindung nicht erlaubt.")
-            log.warning("Anonymer Fallback – pairing=NotPaired, Gamepad-Input wird von Xbox evtl. ignoriert.")
             state = self._run(console.connect(), timeout=15)
-            log.info("Anonymer Connect: state=%s  pairing=%s", state, console.pairing_state)
+            log.info("Connect: state=%s  pairing=%s", state, console.pairing_state)
+        except Exception as e:
+            raise RuntimeError(f"Verbindung fehlgeschlagen: {e}") from e
 
         if state != ConnectionState.Connected:
             raise RuntimeError(f"Verbindung fehlgeschlagen: state={state}")
