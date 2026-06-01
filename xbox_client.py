@@ -99,6 +99,9 @@ class XboxClient:
             name="xbox-asyncio",
         )
         self._loop_thread.start()
+
+        # Lock verhindert parallele Connect-Versuche
+        self._connect_lock = asyncio.Lock()
         log.info("XboxClient: persistenter asyncio-Loop gestartet.")
 
     # ── Internes ─────────────────────────────────────────────────────────────
@@ -153,17 +156,31 @@ class XboxClient:
                  console.authenticated_users_allowed,
                  console.console_users_allowed)
 
-        # ── Verbindung herstellen ────────────────────────────────────────────────
-        # Anonym verbinden (schnell, zuverlässig).
-        # Auth-Connect scheitert weil Xbox auf fragmentierte XSTS-Token-Pakete
-        # (>1024 Byte) keine ConnectResponse schickt – bekanntes Firmware-Problem.
-        state = None
-        log.info("Verbinde anonym...")
-        try:
-            state = self._run(console.connect(), timeout=15)
-            log.info("Connect: state=%s  pairing=%s", state, console.pairing_state)
-        except Exception as e:
-            raise RuntimeError(f"Verbindung fehlgeschlagen: {e}") from e
+        # ── Verbindung herstellen (Lock verhindert parallele Versuche) ────────
+        async def _do_connect():
+            async with self._connect_lock:
+                # 1) Auth-Connect — Buttons brauchen pairing=Paired
+                try:
+                    log.info("Lade XSTS-Token...")
+                    uh, xt = await _load_auth()
+                    log.info("Auth-Connect läuft (bis 60s)...")
+                    s = await asyncio.wait_for(
+                        console.connect(userhash=uh, xsts_token=xt), timeout=60
+                    )
+                    log.info("Auth-Connect: state=%s  pairing=%s", s, console.pairing_state)
+                    return s
+                except Exception as e:
+                    log.warning("Auth-Connect fehlgeschlagen (%s) — anonym...", e)
+
+                # 2) Anonymer Fallback
+                log.warning("Anonym verbunden — pairing=NotPaired, Buttons evtl. eingeschränkt")
+                s = await asyncio.wait_for(console.connect(), timeout=15)
+                log.info("Anon-Connect: state=%s  pairing=%s", s, console.pairing_state)
+                return s
+
+        state = self._run(_do_connect(), timeout=80)
+        if not state:
+            raise RuntimeError("Verbindung fehlgeschlagen")
 
         if state != ConnectionState.Connected:
             raise RuntimeError(f"Verbindung fehlgeschlagen: state={state}")
