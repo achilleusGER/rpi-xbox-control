@@ -129,41 +129,67 @@ class XboxClient:
     # ── Verbindung ───────────────────────────────────────────────────────────
 
     def connect(self, liveid: str) -> dict:
-        """Verbindet authentifiziert mit einer zuvor entdeckten Konsole."""
+        """
+        Verbindet mit der Xbox.
+        Versucht zuerst anonym – das ist schnell und zuverlässig.
+        Wenn die Xbox authentifizierte Verbindungen fordert, wird auf XSTS-Auth gewechselt.
+        """
         console = self._discovered.get(liveid)
         if console is None:
             raise ValueError(f"Konsole '{liveid}' nicht in Discovery-Ergebnissen.")
 
-        # Vorherige Verbindung sauber trennen (verhindert "Already connected")
+        # Vorherige Verbindung sauber trennen
         if self._console is not None:
-            log.info("Trenne bestehende Verbindung vor neuem Connect.")
+            log.info("Trenne bestehende Verbindung.")
             try:
                 self._run(self._console.disconnect(), timeout=5)
             except Exception as e:
                 log.warning("Trennen fehlgeschlagen (ignoriert): %s", e)
             self._console = None
 
-        # XSTS-Token laden
-        userhash, xsts_token = self._run(_load_auth())
+        # Verbindungsoptionen der Xbox loggen
+        log.info("Xbox Verbindungsoptionen: anonym=%s  auth=%s  console_users=%s",
+                 console.anonymous_connection_allowed,
+                 console.authenticated_users_allowed,
+                 console.console_users_allowed)
 
-        # Authentifizierter Connect
-        state = self._run(
-            console.connect(userhash=userhash, xsts_token=xsts_token)
-        )
-        log.info("Verbindungsstatus nach connect(): %s", state)
+        # ── Schritt 1: Anonymer Verbindungsversuch ────────────────────────────
+        state = None
+        if console.anonymous_connection_allowed:
+            log.info("Versuche anonyme Verbindung...")
+            try:
+                state = self._run(console.connect(), timeout=15)
+                log.info("Anonymer Connect: state=%s  pairing=%s",
+                         state, console.pairing_state)
+            except Exception as e:
+                log.warning("Anonymer Connect fehlgeschlagen: %s", e)
+                state = None
+
+        # ── Schritt 2: Authentifizierter Fallback ─────────────────────────────
+        if state != ConnectionState.Connected:
+            log.info("Versuche authentifizierten Connect (XSTS)...")
+            userhash, xsts_token = self._run(_load_auth())
+            state = self._run(
+                console.connect(userhash=userhash, xsts_token=xsts_token),
+                timeout=90,
+            )
+            log.info("Auth-Connect: state=%s  pairing=%s", state, console.pairing_state)
 
         if state != ConnectionState.Connected:
-            raise RuntimeError(f"Verbindung fehlgeschlagen: {state}")
+            raise RuntimeError(f"Verbindung fehlgeschlagen: state={state}")
 
-        # InputManager registrieren – stellt gamepad_input() bereit
+        # InputManager registrieren
         console.add_manager(InputManager)
+        # Kurz warten – async. StartChannelResponse-Pakete müssen ankommen
+        self._run(asyncio.sleep(0.8))
 
         self._console = console
-        log.info("Verbunden mit: %s (auth)", console.name)
+        log.info("Verbunden mit: %s  |  pairing=%s", console.name, console.pairing_state)
         return {
             "liveid":  console.liveid,
             "name":    console.name,
             "address": console.address,
+            "pairing": console.pairing_state.name,
         }
 
     def disconnect(self) -> None:
