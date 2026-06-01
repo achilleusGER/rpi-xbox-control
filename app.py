@@ -15,7 +15,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from keepalive import KeepaliveManager, controller_info
-from xbox_client import XboxClient
+from xbox_client import XboxClient, _load_auth
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -61,6 +61,32 @@ class _RingHandler(logging.Handler):
 _ring_handler = _RingHandler()
 _ring_handler.setLevel(logging.INFO)
 logging.getLogger().addHandler(_ring_handler)
+
+# ── Token-Auto-Refresh ────────────────────────────────────────────────────────
+
+def _token_refresh_loop() -> None:
+    """
+    Hintergrundthread: erneuert den XSTS-Token alle 6 Stunden proaktiv.
+    Läuft unabhängig von Verbindungen – Token ist immer frisch wenn Connect aufgerufen wird.
+    """
+    import asyncio as _aio
+    INTERVAL = 6 * 3600  # 6 Stunden
+
+    while True:
+        time.sleep(INTERVAL)
+        try:
+            loop = _aio.new_event_loop()
+            loop.run_until_complete(_load_auth())
+            loop.close()
+            log.info("Token-Auto-Refresh: erfolgreich erneuert.")
+        except Exception as e:
+            log.warning("Token-Auto-Refresh fehlgeschlagen: %s", e)
+
+
+_refresh_thread = threading.Thread(
+    target=_token_refresh_loop, daemon=True, name="token-refresh"
+)
+_refresh_thread.start()
 
 # ── Einstellungen ─────────────────────────────────────────────────────────────
 
