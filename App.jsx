@@ -443,12 +443,17 @@ export default function App() {
   }
 
   async function connect(liveid, name) {
-    setStatus("Verbinde…");
+    setStatus("Verbinde… (Auth-Versuch 1/3, bis zu 2 min)");
     try {
-      await api("POST", "/connect", { liveid });
+      const info = await api("POST", "/connect", { liveid });
       setConnected(true);
       setConsoleName(name);
-      setStatus(`Verbunden: ${name}`);
+      const pairing = info.pairing || "?";
+      if (pairing === "Paired") {
+        setStatus(`Verbunden: ${name} ✓`);
+      } else {
+        setStatus(`Verbunden (anonym): ${name} — Buttons evtl. eingeschränkt`, false);
+      }
     } catch (e) {
       setStatus("Verbindungsfehler: " + e.message, false);
     }

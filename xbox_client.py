@@ -74,6 +74,12 @@ async def _load_auth() -> tuple[str, str]:
                 "Bitte erneut authentifizieren: python xbox_auth.py"
             ) from e
 
+        # Aktualisierte Tokens zurück auf Disk speichern (hält Refresh-Token frisch)
+        try:
+            tokens_file.write_text(mgr.oauth.json())
+        except Exception as save_e:
+            log.warning("Tokens konnten nicht auf Disk gespeichert werden: %s", save_e)
+
         xsts = mgr.xsts_token
         log.info("Auth-Token geladen (gültig bis %s)", xsts.not_after)
         return str(xsts.userhash), str(xsts.token)
@@ -134,8 +140,13 @@ class XboxClient:
     def connect(self, liveid: str) -> dict:
         """
         Verbindet mit der Xbox.
-        Versucht zuerst anonym – das ist schnell und zuverlässig.
-        Wenn die Xbox authentifizierte Verbindungen fordert, wird auf XSTS-Auth gewechselt.
+
+        Strategie:
+          1. Auth-Connect (XSTS-Token) — bis zu 3 Versuche à 25 s.
+             Zwischen Versuchen: Re-Discovery für frischen Console-Zustand,
+             da ein Timeout den internen Protokoll-State korrumpieren kann.
+          2. Anonymer Fallback — nur wenn alle Auth-Versuche scheitern.
+             pairing=NotPaired → Xbox ignoriert Gamepad-Input!
         """
         console = self._discovered.get(liveid)
         if console is None:
@@ -156,39 +167,86 @@ class XboxClient:
                  console.authenticated_users_allowed,
                  console.console_users_allowed)
 
-        # ── Verbindung herstellen (Lock verhindert parallele Versuche) ────────
+        # Mutable Referenz: kann durch Re-Discovery aktualisiert werden
+        _cref = [console]
+
         async def _do_connect():
             async with self._connect_lock:
-                # 1) Auth-Connect — Buttons brauchen pairing=Paired
-                try:
-                    log.info("Lade XSTS-Token...")
-                    uh, xt = await _load_auth()
-                    log.info("Auth-Connect läuft (bis 60s)...")
-                    s = await asyncio.wait_for(
-                        console.connect(userhash=uh, xsts_token=xt), timeout=60
-                    )
-                    log.info("Auth-Connect: state=%s  pairing=%s", s, console.pairing_state)
-                    return s
-                except Exception as e:
-                    log.warning("Auth-Connect fehlgeschlagen (%s) — anonym...", e)
+                # ── Auth-Connect: bis zu 3 Versuche ──────────────────────────
+                for attempt in range(3):
+                    c = _cref[0]
 
-                # 2) Anonymer Fallback
-                log.warning("Anonym verbunden — pairing=NotPaired, Buttons evtl. eingeschränkt")
-                s = await asyncio.wait_for(console.connect(), timeout=15)
-                log.info("Anon-Connect: state=%s  pairing=%s", s, console.pairing_state)
+                    # Ab Versuch 2: Re-Discovery für frischen Console-Zustand.
+                    # Nach einem Timeout kann das Console-Objekt internen State halten
+                    # (halb-geöffnete Sockets, Protokoll-Flags) — frische Instanz ist sicher.
+                    if attempt > 0:
+                        log.info("Re-Discovery für Auth-Retry %d/3 ...", attempt + 1)
+                        try:
+                            found = await asyncio.wait_for(
+                                Console.discover(timeout=3), timeout=8
+                            )
+                            for fc in found:
+                                if fc.liveid == liveid:
+                                    _cref[0] = fc
+                                    c = fc
+                                    log.info("Re-Discovery: frische Console-Instanz erhalten.")
+                                    break
+                            else:
+                                log.warning("Re-Discovery: Konsole '%s' nicht gefunden.", liveid)
+                        except Exception as re_err:
+                            log.warning("Re-Discovery fehlgeschlagen: %s", re_err)
+
+                    try:
+                        log.info("Auth-Connect Versuch %d/3 (Timeout 25 s)...", attempt + 1)
+                        uh, xt = await _load_auth()
+                        s = await asyncio.wait_for(
+                            c.connect(userhash=uh, xsts_token=xt), timeout=25
+                        )
+                        log.info(
+                            "Auth-Connect OK (Versuch %d): state=%s  pairing=%s",
+                            attempt + 1, s, c.pairing_state,
+                        )
+                        return s
+                    except asyncio.TimeoutError:
+                        log.warning(
+                            "Auth-Connect Timeout (Versuch %d/3)%s",
+                            attempt + 1,
+                            " — weiterer Versuch..." if attempt < 2 else " — gebe auf.",
+                        )
+                        if attempt < 2:
+                            await asyncio.sleep(2)
+                    except Exception as e:
+                        log.warning(
+                            "Auth-Connect Fehler (Versuch %d/3): %s", attempt + 1, e
+                        )
+                        if attempt < 2:
+                            await asyncio.sleep(2)
+
+                # ── Anonymer Fallback ─────────────────────────────────────────
+                log.warning(
+                    "Alle Auth-Versuche fehlgeschlagen — anonymer Fallback. "
+                    "pairing=NotPaired → Gamepad-Buttons werden von der Xbox IGNORIERT!"
+                )
+                c = _cref[0]
+                s = await asyncio.wait_for(c.connect(), timeout=15)
+                log.info("Anon-Connect: state=%s  pairing=%s", s, c.pairing_state)
                 return s
 
-        state = self._run(_do_connect(), timeout=80)
+        # Timeout: 3 × (25 s Auth + 8 s Re-Discovery + 2 s Sleep) + 15 s Anon + Puffer
+        state = self._run(_do_connect(), timeout=130)
         if not state:
             raise RuntimeError("Verbindung fehlgeschlagen")
-
         if state != ConnectionState.Connected:
             raise RuntimeError(f"Verbindung fehlgeschlagen: state={state}")
 
+        # Aktuell gültige Console-Referenz verwenden (ggf. aus Re-Discovery)
+        console = _cref[0]
+
         # InputManager registrieren
         console.add_manager(InputManager)
-        # Kurz warten – async. StartChannelResponse-Pakete müssen ankommen
-        self._run(asyncio.sleep(0.8))
+        # SystemInput-Channel muss von der Xbox bestätigt werden (StartChannelAck).
+        # 2 s statt 0,8 s — gibt dem Channel genug Zeit sich vollständig zu öffnen.
+        self._run(asyncio.sleep(2.0))
 
         self._console = console
         log.info("Verbunden mit: %s  |  pairing=%s", console.name, console.pairing_state)
