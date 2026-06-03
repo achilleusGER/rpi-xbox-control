@@ -342,15 +342,55 @@ export default function App() {
   const [logsError, setLogsError] = useState(false);
   const logBottomRef = useRef(null);
 
+  // Wake Lock (Bildschirm wach halten)
+  const [wakeLockOn, setWakeLockOn]         = useState(false);
+  const [wakeLockSupported, setWakeLockSupported] = useState(false);
+  const wakeLockRef = useRef(null);
+
   // ── Init ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
+    setWakeLockSupported("wakeLock" in navigator);
     loadSequences();
     checkStatus();
     fetchLogs();
     const t = setInterval(() => { checkStatus(); checkRunning(); fetchLogs(); }, 5000);
     return () => clearInterval(t);
   }, []);
+
+  // Wake Lock: bei Tab-Wechsel zurück → neu anfordern (Browser gibt ihn beim Verstecken frei)
+  useEffect(() => {
+    const onVisible = () => {
+      if (wakeLockOn && wakeLockRef.current === null) acquireWakeLock();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [wakeLockOn]);
+
+  async function acquireWakeLock() {
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request("screen");
+      wakeLockRef.current.addEventListener("release", () => {
+        wakeLockRef.current = null;
+      });
+    } catch (e) {
+      console.warn("Wake Lock fehlgeschlagen:", e);
+    }
+  }
+
+  async function toggleWakeLock(enable) {
+    if (!wakeLockSupported) return;
+    if (enable) {
+      await acquireWakeLock();
+      setWakeLockOn(true);
+    } else {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      }
+      setWakeLockOn(false);
+    }
+  }
 
   // Beim Wechsel auf Logs-Tab sofort scrollen
   useEffect(() => {
@@ -844,18 +884,39 @@ export default function App() {
             <div className={`cdot ${ctrlConnected ? "cdot--ok" : "cdot--err"}`} />
           </div>
 
-          {/* Wachhalten-Toggle */}
+          {/* Wachhalten-Toggle (USB-Controller) */}
           <div className="tog-row">
             <div className="tog-row__info">
-              <div className="tog-row__lbl">Wachhalten</div>
+              <div className="tog-row__lbl">Controller wachhalten</div>
               <div className="tog-row__sub">Verhindert automatisches Trennen (Rumble-Ping alle 25 s)</div>
             </div>
-            <label className="sw" aria-label="Wachhalten">
+            <label className="sw" aria-label="Controller wachhalten">
               <input
                 type="checkbox"
                 checked={keepaliveOn}
                 disabled={keepaliveBusy}
                 onChange={e => toggleKeepalive(e.target.checked)}
+              />
+              <span className="sw__t" />
+            </label>
+          </div>
+
+          {/* Bildschirm wach halten */}
+          <div className="tog-row" style={!wakeLockSupported ? { opacity: 0.45 } : {}}>
+            <div className="tog-row__info">
+              <div className="tog-row__lbl">Bildschirm wach halten</div>
+              <div className="tog-row__sub">
+                {wakeLockSupported
+                  ? "Verhindert, dass das Handy einschläft und die Verbindung verliert"
+                  : "Nicht unterstützt (nur Chrome/Edge/Safari ≥ 16.4)"}
+              </div>
+            </div>
+            <label className="sw" aria-label="Bildschirm wach halten">
+              <input
+                type="checkbox"
+                checked={wakeLockOn}
+                disabled={!wakeLockSupported}
+                onChange={e => toggleWakeLock(e.target.checked)}
               />
               <span className="sw__t" />
             </label>
