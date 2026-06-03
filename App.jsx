@@ -459,6 +459,23 @@ export default function App() {
     }
   }
 
+  async function reconnect() {
+    setStatus("Wiederherstelle Verbindung… (bis zu 2 min)");
+    try {
+      const info = await api("POST", "/reconnect");
+      setConnected(true);
+      const pairing = info.pairing || "?";
+      if (pairing === "Paired") {
+        setStatus(`Wiederhergestellt: ${info.name} ✓`);
+        setConsoleName(info.name);
+      } else {
+        setStatus(`Wiederhergestellt (anonym): ${info.name} — Buttons evtl. eingeschränkt`, false);
+      }
+    } catch (e) {
+      setStatus("Reconnect fehlgeschlagen: " + e.message, false);
+    }
+  }
+
   async function sendButton(btn) {
     if (!connected) return setStatus("Nicht verbunden", false);
     try {
@@ -848,7 +865,24 @@ export default function App() {
         {/* Controller */}
         <div className="card">
           <div className="card__head">Direkte Steuerung</div>
-          {!connected && (
+          {!connected && consoleName && (
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              gap: "var(--s3)", marginBottom: "var(--s3)",
+              padding: "var(--s2) var(--s3)",
+              background: "color-mix(in srgb, var(--cdr) 12%, transparent)",
+              borderRadius: "var(--r)",
+              border: "1px solid color-mix(in srgb, var(--cdr) 30%, transparent)",
+            }}>
+              <span style={{ fontSize: "var(--ts)", color: "var(--cdr)" }}>
+                Verbindung unterbrochen
+              </span>
+              <button className="btn btn--sm btn--pri" onClick={reconnect}>
+                ↺ Wiederherstellen
+              </button>
+            </div>
+          )}
+          {!connected && !consoleName && (
             <p style={{ fontSize: "var(--ts)", color: "var(--cdr)", marginBottom: "var(--s3)" }}>
               Nicht verbunden — Buttons deaktiviert.
             </p>

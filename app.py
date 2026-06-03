@@ -229,6 +229,17 @@ def connect():
         return jsonify({"error": str(e)}), 500
 
 
+@app.post("/api/reconnect")
+def reconnect():
+    """Erneut verbinden zur zuletzt bekannten Xbox — kein manueller Scan nötig."""
+    try:
+        info = client.reconnect()
+        return jsonify(info)
+    except Exception as e:
+        log.exception("Reconnect-Fehler")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.post("/api/disconnect")
 def disconnect():
     client.disconnect()

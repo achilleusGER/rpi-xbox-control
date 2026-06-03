@@ -96,6 +96,7 @@ class XboxClient:
     def __init__(self) -> None:
         self._console: Optional[Console] = None
         self._discovered: dict[str, Console] = {}
+        self._last_liveid: Optional[str] = None   # für Reconnect ohne Neuscan
 
         # Persistenter Event Loop in eigenem Thread
         self._loop = asyncio.new_event_loop()
@@ -108,9 +109,34 @@ class XboxClient:
 
         # Lock verhindert parallele Connect-Versuche
         self._connect_lock = asyncio.Lock()
-        log.info("XboxClient: persistenter asyncio-Loop gestartet.")
+
+        # Watchdog starten
+        asyncio.run_coroutine_threadsafe(self._watchdog(), self._loop)
+        log.info("XboxClient: persistenter asyncio-Loop + Watchdog gestartet.")
 
     # ── Internes ─────────────────────────────────────────────────────────────
+
+    async def _watchdog(self) -> None:
+        """
+        Hintergrundtask auf dem persistenten Loop.
+        Prüft alle 15 s ob die Verbindung noch lebt.
+        Setzt self._console = None wenn ConnectionState != Connected —
+        so liefert .connected korrekt False und die UI zeigt „getrennt".
+        """
+        while True:
+            await asyncio.sleep(15)
+            if self._console is not None:
+                try:
+                    state = self._console.connection_state
+                    if state != ConnectionState.Connected:
+                        log.warning(
+                            "Watchdog: Verbindung verloren (state=%s) — Console zurückgesetzt.",
+                            state,
+                        )
+                        self._console = None
+                except Exception as e:
+                    log.warning("Watchdog: Fehler beim Status-Check: %s — Console zurückgesetzt.", e)
+                    self._console = None
 
     def _run(self, coro, timeout: float = 30.0):
         """Übergibt eine Coroutine an den Hintergrundloop und wartet synchron."""
@@ -249,6 +275,7 @@ class XboxClient:
         self._run(asyncio.sleep(2.0))
 
         self._console = console
+        self._last_liveid = liveid
         log.info("Verbunden mit: %s  |  pairing=%s", console.name, console.pairing_state)
         return {
             "liveid":  console.liveid,
@@ -256,6 +283,27 @@ class XboxClient:
             "address": console.address,
             "pairing": console.pairing_state.name,
         }
+
+    def reconnect(self) -> dict:
+        """
+        Verbindet erneut zur zuletzt bekannten Xbox.
+        Führt einen kurzen Scan durch (4 s), dann connect() mit Auth-Retry.
+        Kein manueller Scan im UI nötig.
+        """
+        if not self._last_liveid:
+            raise RuntimeError(
+                "Keine bekannte Konsole. Bitte zuerst Scan + Verbinden."
+            )
+        liveid = self._last_liveid
+        log.info("Reconnect zu LiveID %s ...", liveid)
+
+        # Kurzer Scan für frische Console-Objekte
+        found = self.discover(timeout=4)
+        if not any(c["liveid"] == liveid for c in found):
+            raise RuntimeError(
+                f"Konsole nicht gefunden. Xbox eingeschaltet und im selben Netzwerk?"
+            )
+        return self.connect(liveid)
 
     def disconnect(self) -> None:
         if self._console:
@@ -300,10 +348,19 @@ class XboxClient:
                 f"Gültig: {list(BUTTON_MAP.keys())}"
             )
 
-        async def _press():
-            await self._console.gamepad_input(btn)
-            await asyncio.sleep(0.1)                               # kurz gedrückt halten
-            await self._console.gamepad_input(GamePadButton.Clear) # loslassen
+        console = self._console  # lokale Kopie (Thread-safe)
 
-        self._run(_press())
+        async def _press():
+            await console.gamepad_input(btn)
+            await asyncio.sleep(0.1)                              # kurz gedrückt halten
+            await console.gamepad_input(GamePadButton.Clear)      # loslassen
+
+        try:
+            self._run(_press())
+        except Exception as e:
+            # Sende-Fehler = Verbindung tot → Console zurücksetzen damit UI es merkt
+            log.warning("Button-Send fehlgeschlagen (%s) — Verbindung als getrennt markiert.", e)
+            self._console = None
+            raise RuntimeError("Verbindung unterbrochen. Bitte neu verbinden.") from e
+
         log.info("Button gesendet: %s", button_name)
